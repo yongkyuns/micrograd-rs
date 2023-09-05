@@ -9,19 +9,39 @@ pub enum Op {
 }
 
 impl Op {
-    fn backward(&self, out: &Value_, a: &mut Value_, b: &mut Value_) {
+    fn backward(&self, out: &Value_, a: &ValueRef, b: &ValueRef) {
         match self {
             Op::Add => {
-                a.grad += 1.0 * out.grad;
-                b.grad += 1.0 * out.grad;
+                if let Ok(mut a) = a.write() {
+                    a.grad += 1.0 * out.grad;
+                } else {
+                    panic!("Failed to get reference to value");
+                }
+                if let Ok(mut b) = b.write() {
+                    b.grad += 1.0 * out.grad;
+                } else {
+                    panic!("Failed to get reference to value");
+                }
             }
             Op::Mul => {
-                a.grad += b.data * out.grad;
-                b.grad += a.data * out.grad;
+                if let Ok(mut a) = a.write() {
+                    a.grad += b.read().unwrap().data * out.grad;
+                } else {
+                    panic!("Failed to get reference to value");
+                }
+                if let Ok(mut b) = b.write() {
+                    b.grad += a.read().unwrap().data * out.grad;
+                } else {
+                    panic!("Failed to get reference to value");
+                }
             }
             Op::Tanh => {
-                let tanh = a.data.tanh();
-                a.grad += (1.0 - tanh * tanh) * out.grad;
+                if let Ok(mut a) = a.write() {
+                    let tanh = a.data.tanh();
+                    a.grad += (1.0 - tanh * tanh) * out.grad;
+                } else {
+                    panic!("Failed to get reference to value");
+                }
             }
             Op::None => {}
         }
@@ -43,6 +63,33 @@ impl Value_ {
             op: Op::None,
             prev: vec![],
             grad: 0.0,
+        }
+    }
+
+    fn backward(&self) {
+        match self.prev.len() {
+            1 => {
+                self.op.backward(&self, &self.prev[0], &self.prev[0]);
+                if let Ok(a) = self.prev[0].write() {
+                    a.backward(); // recursively call backward on previous node
+                } else {
+                    panic!("Failed to get reference to value");
+                }
+            }
+            2 => {
+                self.op.backward(&self, &self.prev[0], &self.prev[1]);
+                if let Ok(a) = self.prev[0].write() {
+                    a.backward(); // recursively call backward on previous node
+                } else {
+                    panic!("Failed to get reference to value");
+                }
+                if let Ok(b) = self.prev[1].write() {
+                    b.backward(); // recursively call backward on previous node
+                } else {
+                    panic!("Failed to get reference to value");
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -70,24 +117,8 @@ impl Value {
         self.0.read().unwrap().data
     }
 
-    fn set_data(&mut self, data: f64) {
-        self.0.write().unwrap().data = data;
-    }
-
     fn grad(&self) -> f64 {
         self.0.read().unwrap().grad
-    }
-
-    fn set_grad(&mut self, grad: f64) {
-        self.0.write().unwrap().grad = grad;
-    }
-
-    fn prev(&self) -> Vec<ValueRef> {
-        self.0.read().unwrap().prev.clone()
-    }
-
-    fn op(&self) -> Op {
-        self.0.read().unwrap().op
     }
 
     pub fn tanh(self) -> Self {
@@ -95,26 +126,11 @@ impl Value {
     }
 
     pub fn backward(&self) {
-        match self.prev().len() {
-            1 => {
-                if let (Ok(s), Ok(mut a)) = (self.0.read(), self.prev()[0].write()) {
-                    self.op().backward(&s, &mut a, &mut Value_::new(0.0));
-                } else {
-                    panic!("Failed to get reference to value");
-                }
-            }
-            2 => {
-                if let (Ok(s), Ok(mut a), Ok(mut b)) = (
-                    self.0.read(),
-                    self.prev()[0].write(),
-                    self.prev()[1].write(),
-                ) {
-                    self.op().backward(&s, &mut a, &mut b);
-                } else {
-                    panic!("Failed to get reference to value");
-                }
-            }
-            _ => {}
+        if let Ok(mut inner) = self.0.write() {
+            inner.grad = 1.0;
+        }
+        if let Ok(inner) = self.0.read() {
+            inner.backward();
         }
     }
 }
@@ -146,41 +162,6 @@ impl std::ops::Mul for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn test_case() {
-        let h = 0.001;
-
-        let a = Value::new(2.0);
-        let b = Value::new(-3.0);
-        let c = Value::new(10.0);
-        let e = a * b;
-        let d = e + c;
-        let f = Value::new(-2.0);
-        let L = d * f;
-        let L1 = L.data();
-
-        let a = Value::new(2.0);
-        let b = Value::new(-3.0);
-        let c = Value::new(10.0);
-        let e = a * b;
-        let d = e + c;
-        let f = Value::new(-2.0);
-        let L = d * f;
-        let L2 = L.data();
-        println!("{:?}", (L2 - L1) / h);
-
-        let x1 = Value::new(2.0);
-        let x2 = Value::new(0.0);
-        let w1 = Value::new(-3.0);
-        let w2 = Value::new(1.0);
-        let b = Value::new(6.7);
-        let x1w1 = x1 * w1;
-        let x2w2 = x2 * w2;
-        let x1w1x2w2 = x1w1 + x2w2;
-        let n = x1w1x2w2 + b;
-        let o = n.tanh();
-        println!("{}", o.data());
-    }
 
     fn float_eq(exp: f64, act: f64) -> bool {
         if exp < std::f64::EPSILON {
@@ -196,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tanh() {
+    fn test_backward() {
         let x1 = Value::new(2.0);
         let x2 = Value::new(0.0);
         let w1 = Value::new(-3.0);
@@ -207,14 +188,9 @@ mod tests {
         let x2w2 = x2.clone() * w2.clone();
         let x1w1x2w2 = x1w1.clone() + x2w2.clone();
         let n = x1w1x2w2.clone() + b;
-        let mut o = n.clone().tanh();
+        let o = n.clone().tanh();
 
-        o.set_grad(1.0);
         o.backward();
-        n.backward();
-        x1w1x2w2.backward();
-        x2w2.backward();
-        x1w1.backward();
 
         assert!(float_eq(0.7071, o.data()));
         assert!(float_eq(0.5, n.grad()));
@@ -222,5 +198,22 @@ mod tests {
         assert!(float_eq(0.0, w2.grad()));
         assert!(float_eq(1.0, w1.grad()));
         assert!(float_eq(-1.5, x1.grad()));
+    }
+
+    #[test]
+    fn test_gradient_accumulation() {
+        let a = Value::new(3.0);
+        let b = a.clone() + a.clone();
+        b.backward();
+        assert!(float_eq(2.0, a.grad()));
+
+        let a = Value::new(-2.0);
+        let b = Value::new(3.0);
+        let d = a.clone() * b.clone();
+        let e = a.clone() + b.clone();
+        let f = d * e;
+        f.backward();
+        assert!(float_eq(-3.0, a.grad()));
+        assert!(float_eq(-8.0, b.grad()));
     }
 }
