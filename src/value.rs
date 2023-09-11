@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Op {
     Add,
     Mul,
@@ -142,12 +142,18 @@ impl Value {
         })))
     }
 
-    fn data(&self) -> f64 {
+    pub fn data(&self) -> f64 {
         self.0.read().unwrap().data
     }
 
-    fn grad(&self) -> f64 {
+    pub fn grad(&self) -> f64 {
         self.0.read().unwrap().grad
+    }
+
+    pub fn step(&self, size: f64) {
+        if let Ok(mut v) = self.0.write() {
+            v.data += -size.abs() * v.grad;
+        }
     }
 
     pub fn tanh(self) -> Self {
@@ -175,25 +181,41 @@ impl Value {
         let mut visited = Vec::new();
         build_topo(&mut topo, &mut visited, self.0.clone());
 
-        println!("{}", topo.len());
+        let mut cnt = 0;
+        for v in topo.iter().rev() {
+            if let Ok(v) = v.read() {
+                if v.op == Op::Tanh {
+                    cnt = cnt + 1;
+                }
+            }
+        }
+        // println!("# tanh = {}", cnt);
+
+        // println!("{}", topo.len());
         for v in topo.iter().rev() {
             v.read().unwrap().backward();
-            if let Ok(v) = v.read() {
-                println!("{:>5}|{:7.3}|{:7.3}", v.op.to_string(), v.data, v.grad);
-            }
+            // if let Ok(v) = v.read() {
+            //     println!("{:>5}|{:7.3}|{:7.3}", v.op.to_string(), v.data, v.grad);
+            // }
         }
     }
 }
 
 fn build_topo(topo: &mut Vec<ValueRef>, visited_ids: &mut Vec<Id>, value: ValueRef) {
     if let Ok(v) = value.read() {
-        if !visited_ids.contains(&v.id) {
+        if !visited_ids.contains(&v.id) && v.op != Op::None {
             visited_ids.push(v.id);
             for child in v.prev.iter() {
                 build_topo(topo, visited_ids, child.clone());
             }
             topo.push(value.clone());
         }
+    }
+}
+
+impl Into<Value> for f64 {
+    fn into(self) -> Value {
+        Value::new(self)
     }
 }
 
@@ -218,11 +240,19 @@ impl std::ops::Add<f64> for Value {
     }
 }
 
+impl std::ops::Neg for Value {
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        self * -1.0
+    }
+}
+
 impl std::ops::Sub for Value {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self {
-        self + (rhs * Value::new(-1.0))
+        self + (-rhs)
     }
 }
 
