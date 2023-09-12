@@ -142,7 +142,6 @@ mod tests {
                         acc + (y.clone() - ypred.clone()).pow(Value::new(2.0))
                     });
                 loss.backward();
-                // println!("loss = {}", loss.data());
                 if k == 0 {
                     init.push(loss.data());
                 }
@@ -155,8 +154,9 @@ mod tests {
                 }
             }
         }
-        println!("elapsed = {} ms", start.elapsed().as_millis());
-        println!("{}", init.iter().sum::<f64>() / init.len() as f64);
-        println!("{}", fin.iter().sum::<f64>() / fin.len() as f64);
+        let _elapsed = start.elapsed().as_millis();
+        let initial_loss = init.iter().sum::<f64>() / init.len() as f64;
+        let final_loss = fin.iter().sum::<f64>() / fin.len() as f64;
+        assert!(final_loss / initial_loss < 0.1);
     }
 }
