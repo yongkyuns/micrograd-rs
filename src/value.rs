@@ -5,6 +5,7 @@ pub enum Op {
     Add,
     Mul,
     Tanh,
+    Relu,
     Exp,
     Pow,
     None,
@@ -45,6 +46,14 @@ impl Op {
                     panic!("Failed to get reference to value");
                 }
             }
+            Op::Relu => {
+                if let Ok(mut a) = a.write() {
+                    let relu = if out.data > 0.0 { 1.0 } else { 0.0 };
+                    a.grad += relu * out.grad;
+                } else {
+                    panic!("Failed to get reference to value");
+                }
+            }
             Op::Exp => {
                 if let Ok(mut a) = a.write() {
                     a.grad += out.data * out.grad;
@@ -69,6 +78,7 @@ impl Op {
             Op::Add => "+",
             Op::Mul => "x",
             Op::Tanh => "tanh",
+            Op::Relu => "relu",
             Op::Exp => "exp",
             Op::Pow => "pow",
             Op::None => "",
@@ -77,7 +87,7 @@ impl Op {
 }
 
 /// Unique identifier for [`Value`]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Id(usize);
 
 impl Id {
@@ -146,18 +156,29 @@ impl Value {
         self.0.read().unwrap().data
     }
 
+    pub fn set_data(&self, value: f64) {
+        if let Ok(mut p) = self.0.write() {
+            p.data = value;
+        }
+    }
+
     pub fn grad(&self) -> f64 {
         self.0.read().unwrap().grad
     }
 
     pub fn step(&self, size: f64) {
-        if let Ok(mut v) = self.0.write() {
-            v.data += -size.abs() * v.grad;
+        if let Ok(mut p) = self.0.write() {
+            p.data -= size.abs() * p.grad;
         }
     }
 
     pub fn tanh(self) -> Self {
         Self::new_from_op(self.data().tanh(), Op::Tanh, vec![self.0.clone()])
+    }
+
+    pub fn relu(self) -> Self {
+        let relu = if self.data() > 0.0 { self.data() } else { 0.0 };
+        Self::new_from_op(relu, Op::Relu, vec![self.0.clone()])
     }
 
     pub fn exp(self) -> Self {
@@ -179,19 +200,11 @@ impl Value {
 
         let mut topo = Vec::new();
         let mut visited = Vec::new();
+        let start = std::time::Instant::now();
         build_topo(&mut topo, &mut visited, self.0.clone());
-
-        let mut cnt = 0;
-        for v in topo.iter().rev() {
-            if let Ok(v) = v.read() {
-                if v.op == Op::Tanh {
-                    cnt = cnt + 1;
-                }
-            }
-        }
-        // println!("# tanh = {}", cnt);
-
         // println!("{}", topo.len());
+        // println!("elapsed = {:5.3} sec", start.elapsed().as_secs_f64());
+
         for v in topo.iter().rev() {
             v.read().unwrap().backward();
             // if let Ok(v) = v.read() {
@@ -199,16 +212,27 @@ impl Value {
             // }
         }
     }
+
+    pub fn zero_grad(&self) {
+        if let Ok(mut v) = self.0.write() {
+            v.grad = 0.0;
+        }
+    }
 }
 
 fn build_topo(topo: &mut Vec<ValueRef>, visited_ids: &mut Vec<Id>, value: ValueRef) {
     if let Ok(v) = value.read() {
-        if !visited_ids.contains(&v.id) && v.op != Op::None {
-            visited_ids.push(v.id);
-            for child in v.prev.iter() {
-                build_topo(topo, visited_ids, child.clone());
+        if v.op != Op::None {
+            match visited_ids.binary_search(&v.id) {
+                Ok(_) => {}
+                Err(pos) => {
+                    visited_ids.insert(pos, v.id);
+                    for child in v.prev.iter() {
+                        build_topo(topo, visited_ids, child.clone());
+                    }
+                    topo.push(value.clone());
+                }
             }
-            topo.push(value.clone());
         }
     }
 }
@@ -297,19 +321,7 @@ impl std::ops::Mul<f64> for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn float_eq(exp: f64, act: f64) -> bool {
-        if exp < std::f64::EPSILON {
-            if act < std::f64::EPSILON {
-                true
-            } else {
-                false
-            }
-        } else {
-            let tol = exp * 1.0e-4;
-            (exp - act).abs() < tol
-        }
-    }
+    use crate::util::float_eq;
 
     #[test]
     fn test_backward() {
