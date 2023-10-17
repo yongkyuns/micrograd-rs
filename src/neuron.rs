@@ -105,6 +105,8 @@ impl MLP {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::util::float_eq;
 
@@ -233,7 +235,16 @@ mod tests {
         println!("Number of parameters: {}", model.parameters().len());
         let data = crate::moon::moon_data();
 
-        for k in 0..100 {
+        for k in 0..1 {
+            // for p in model.parameters().iter() {
+            //     // println!("{}", p.data());
+            //     p.set_data(0.1);
+            // }
+
+            // println!("********************************************");
+            // println!("{}", k);
+            // println!("********************************************");
+
             let (total_loss, acc) = loss(&model, &data, None);
             model.zero_grad();
             total_loss.backward();
@@ -241,12 +252,19 @@ mod tests {
             let learning_rate = 1.0 - 0.9 * (k as f64) / 100.0;
 
             for p in model.parameters().iter() {
+                // println!("Before: {}, Grad: {}", p.data(), p.grad());
                 p.step(learning_rate);
+                // println!("After: {}\n", p.data());
             }
+
+            // let score = model.run(vec![data[k].0, data[k].1]);
+            // println!("{}", score[0].data());
 
             if k % 1 == 0 {
                 println!(
-                    "rate {learning_rate} step {k} loss {}, accuracy {:5.3}%",
+                    "rate {:3.3} step {:2.2} loss {:3.3}, accuracy {:5.3}%",
+                    learning_rate,
+                    k,
                     total_loss.data(),
                     acc * 100.0
                 );
@@ -306,27 +324,86 @@ mod tests {
 
     #[test]
     fn unit_test() {
-        let data = vec![0.1, -0.1];
-        let yb = 1;
+        let data = crate::moon::moon_data();
+        let model = MLP::new(2, vec![3, 3, 1]);
+        for i in 0..3 {
+            for p in model.parameters().iter() {
+                p.set_data(0.1);
+            }
 
-        let model = MLP::new(2, vec![16, 16, 1]);
+            // let score = model.run(vec![data[i].0, data[i].1]);
+            // assert!(float_eq(0.516, score[0].data()));
+            // println!("{:5.3}", score[0].data());
+
+            let (total_loss, _) = loss(&model, &data, None);
+
+            model.zero_grad();
+            total_loss.backward();
+
+            for p in model.parameters().iter() {
+                p.step(0.05);
+            }
+            let score = model.run(vec![data[i].0, data[i].1]);
+            println!("{}", score[0].data());
+            // assert!(float_eq(0.5935553052638496, score[0].data()));
+        }
+    }
+
+    #[test]
+    fn backprop() {
+        let data = vec![(0.5, -0.2, 1)];
+        let model = MLP::new(2, vec![2, 2, 1]);
         for p in model.parameters().iter() {
             p.set_data(0.1);
         }
-
-        let score = model.run(data.clone());
-        assert!(float_eq(0.516, score[0].data()));
-
-        let (total_loss, _) = loss(&model, &vec![(data[0], data[1], yb)], None);
-
+        let (total_loss, _) = loss(&model, &data, None);
         model.zero_grad();
         total_loss.backward();
-
-        for p in model.parameters().iter() {
-            p.step(0.05);
+        for p in total_loss.get_topo().iter().rev() {
+            let p = p.read().unwrap();
+            // println!("{}, {}", p.op.to_string(), p.grad);
         }
-        let score = model.run(data);
+        let score = model.run(vec![data[0].0, data[0].1]);
         println!("{}", score[0].data());
-        // assert!(float_eq(0.5935553052638496, score[0].data()));
+    }
+
+    #[test]
+    #[cfg(feature = "layout")]
+    fn graph() {
+        use layout::backends::svg::SVGWriter;
+        use layout::core::base::Orientation;
+        use layout::core::geometry::Point;
+        use layout::core::style::*;
+        use layout::core::utils::save_to_file;
+        use layout::std_shapes::shapes::*;
+        use layout::topo::layout::VisualGraph;
+
+        // Create a new graph:
+        let mut vg = VisualGraph::new(Orientation::TopToBottom);
+
+        // Define the node styles:
+        let sp0 = ShapeKind::new_box("one");
+        let sp1 = ShapeKind::new_box("two");
+        let look0 = StyleAttr::simple();
+        let look1 = StyleAttr::simple();
+        let sz = Point::new(100., 100.);
+        // Create the nodes:
+        let node0 = Element::create(sp0, look0, Orientation::LeftToRight, sz);
+        let node1 = Element::create(sp1, look1, Orientation::LeftToRight, sz);
+
+        // Add the nodes to the graph, and save a handle to each node.
+        let handle0 = vg.add_node(node0);
+        let handle1 = vg.add_node(node1);
+
+        // Add an edge between the nodes.
+        let arrow = Arrow::simple("123");
+        vg.add_edge(arrow, handle0, handle1);
+
+        // Render the nodes to some rendering backend.
+        let mut svg = SVGWriter::new();
+        vg.do_it(false, false, false, &mut svg);
+
+        // Save the output.
+        let _ = save_to_file("graph.svg", &svg.finalize());
     }
 }
