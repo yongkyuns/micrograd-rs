@@ -88,7 +88,7 @@ pub struct MLP {
 }
 
 impl MLP {
-    pub fn new(nin: usize, mut nouts: Vec<usize>) -> Self {
+    pub fn new(nin: usize, mut nouts: Vec<usize>, act: Activation) -> Self {
         nouts.insert(0, nin);
         let mut layers = Vec::new();
         nouts
@@ -99,7 +99,7 @@ impl MLP {
                 let act = if i == nouts.len() - 2 {
                     Activation::Linear
                 } else {
-                    Activation::Relu
+                    act
                 };
                 layers.push(Layer::new(nin, nout, act));
             });
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn it_works() {
         let x = vec![2.0, 3.0, -1.0];
-        let n = MLP::new(3, vec![4, 4, 1]);
+        let n = MLP::new(3, vec![4, 4, 1], Activation::Tanh);
         let r = n.run(x);
         println!("{:?}", r.iter().map(|v| v.data()).collect::<Vec<f64>>());
     }
@@ -165,7 +165,7 @@ mod tests {
         let start = Instant::now();
 
         for _ in 0..1000 {
-            let mlp = MLP::new(3, vec![4, 4, 1]);
+            let mlp = MLP::new(3, vec![4, 4, 1], Activation::Tanh);
             for k in 0..n {
                 let ypred: Vec<Value> = xs.iter().flat_map(|x| mlp.run(x.clone())).collect();
                 let loss = ys
@@ -194,6 +194,7 @@ mod tests {
         let _elapsed = start.elapsed().as_millis();
         let initial_loss = init.iter().sum::<f64>() / init.len() as f64;
         let final_loss = fin.iter().sum::<f64>() / fin.len() as f64;
+        println!("inital loss: {}, final loss: {}", initial_loss, final_loss);
         assert!(final_loss / initial_loss < 0.07);
     }
 
@@ -251,7 +252,7 @@ mod tests {
     #[cfg(feature = "layout")]
     fn test_mlp_visualization() {
         let data = vec![(0.5, -0.2, 1)];
-        let model = MLP::new(2, vec![2, 2, 1]);
+        let model = MLP::new(2, vec![2, 2, 1], Activation::Relu);
         for p in model.parameters().iter() {
             p.set_data(0.1);
         }
@@ -271,7 +272,7 @@ mod tests {
     #[test]
     fn test_binary_classifier() {
         for _ in 0..3 {
-            let model = MLP::new(2, vec![16, 16, 1]);
+            let model = MLP::new(2, vec![16, 16, 1], Activation::Relu);
             let data = crate::moon::moon_data();
 
             let mut final_accuracy = 0.0;

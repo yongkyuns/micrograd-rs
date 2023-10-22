@@ -12,7 +12,7 @@
 /// for i in range(y.shape[0]):
 /// 	print("({:15.10}, {:15.10}, {:>3}),".format(X[i,0], X[i,1], y[i]))
 /// ```
-pub const moon: [(f64, f64, i32); 100] = [
+pub const DATA: [(f64, f64, i32); 100] = [
     (0.08982086542, 1.01676317, -1),
     (0.6884009821, 0.5045909667, -1),
     (-0.01285492211, 0.3124591913, 1),
@@ -117,7 +117,7 @@ pub const moon: [(f64, f64, i32); 100] = [
 
 pub fn moon_data() -> Vec<(f64, f64, i32)> {
     let mut data = Vec::new();
-    for (a, b, c) in moon.iter() {
+    for (a, b, c) in DATA.iter() {
         data.push((*a, *b, *c));
     }
     data

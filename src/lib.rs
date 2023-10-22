@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod moon;
 pub mod neuron;
 pub mod util;

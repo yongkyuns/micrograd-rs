@@ -585,6 +585,6 @@ mod tests {
         let mut vg = o.trace();
         let mut svg = SVGWriter::new();
         vg.do_it(false, false, false, &mut svg);
-        let _ = save_to_file("graph.svg", &svg.finalize());
+        let _ = save_to_file("graph_vis.svg", &svg.finalize());
     }
 }
