@@ -4,9 +4,17 @@ use std::iter::IntoIterator;
 
 use crate::value::Value;
 
+#[derive(Debug, Clone, Copy)]
+pub enum Activation {
+    Relu,
+    Tanh,
+    Linear,
+}
+
 pub struct Neuron {
     w: Vec<Value>,
     b: Value,
+    act: Activation,
 }
 
 impl Neuron {
@@ -16,7 +24,13 @@ impl Neuron {
             .map(|_| Value::new(rng.gen_range(-1.0..1.0)))
             .collect();
         let b = Value::new(rng.gen_range(-1.0..1.0));
-        Self { w, b }
+        let act = Activation::Relu;
+        Self { w, b, act }
+    }
+
+    pub fn with_activation(mut self, act: Activation) -> Self {
+        self.act = act;
+        self
     }
 
     pub fn run<T, U>(&self, x: T) -> Value
@@ -29,9 +43,12 @@ impl Neuron {
             .iter()
             .zip(x.into_iter())
             .fold(self.b.clone(), |acc, (w, x)| acc + w.clone() * x.into());
-        // let out = act.tanh();
-        let out = act.relu();
-        out
+
+        match self.act {
+            Activation::Relu => act.relu(),
+            Activation::Tanh => act.tanh(),
+            Activation::Linear => act,
+        }
     }
 
     pub fn parameters(&self) -> Vec<Value> {
@@ -46,8 +63,10 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub fn new(nin: usize, nout: usize) -> Self {
-        let neurons = (0..nout).map(|_| Neuron::new(nin)).collect();
+    pub fn new(nin: usize, nout: usize, act: Activation) -> Self {
+        let neurons = (0..nout)
+            .map(|_| Neuron::new(nin).with_activation(act))
+            .collect();
         Self { neurons }
     }
 
@@ -75,8 +94,14 @@ impl MLP {
         nouts
             .iter()
             .zip(nouts.iter().skip(1))
-            .for_each(|(&nin, &nout)| {
-                layers.push(Layer::new(nin, nout));
+            .enumerate()
+            .for_each(|(i, (&nin, &nout))| {
+                let act = if i == nouts.len() - 2 {
+                    Activation::Linear
+                } else {
+                    Activation::Relu
+                };
+                layers.push(Layer::new(nin, nout, act));
             });
 
         Self { layers }
@@ -105,10 +130,7 @@ impl MLP {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
-    use crate::util::float_eq;
 
     #[test]
     fn it_works() {
@@ -155,7 +177,7 @@ mod tests {
 
                 mlp.zero_grad();
                 loss.backward();
-                // println!("{}", loss.data());
+
                 if k == 0 {
                     init.push(loss.data());
                 }
@@ -176,19 +198,16 @@ mod tests {
     }
 
     fn loss(model: &MLP, data: &Vec<(f64, f64, i32)>, batch_size: Option<usize>) -> (Value, f64) {
-        // use rand::thread_rng;
-
-        // let batch_size = batch_size.unwrap_or(data.len());
-
-        // let batch = x
-        //     .iter()
-        //     .zip(y.iter())
-        //     .choose_multiple(&mut thread_rng(), batch_size);
-        let batch = data;
+        use rand::seq::SliceRandom;
+        use rand::thread_rng;
+        let batch_size = batch_size.unwrap_or(data.len());
+        let batch: Vec<_> = data
+            .choose_multiple(&mut thread_rng(), batch_size)
+            .collect();
 
         let scores = batch
             .iter()
-            .map(|&(a, b, _)| model.run(vec![Value::new(a), Value::new(b)]))
+            .map(|&(a, b, _)| model.run(vec![Value::new(*a), Value::new(*b)]))
             .collect::<Vec<_>>();
 
         let losses = batch
@@ -216,7 +235,7 @@ mod tests {
         let total_loss = data_loss + reg_loss;
 
         let result = batch
-            .iter()
+            .into_iter()
             .map(|&(_, _, yb)| yb)
             .zip(scores.iter())
             .map(|(yi, scorei)| (yi > 0) == (scorei[0].data() > 0.0))
@@ -226,131 +245,11 @@ mod tests {
             result.iter().filter(|&&r| r).fold(0.0, |acc, _| acc + 1.0) / result.len() as f64;
 
         (total_loss, accuracy)
-        // (reg_loss, 0.0)
     }
 
     #[test]
-    fn test_binary_classifier() {
-        let model = MLP::new(2, vec![16, 16, 1]);
-        println!("Number of parameters: {}", model.parameters().len());
-        let data = crate::moon::moon_data();
-
-        for k in 0..1 {
-            // for p in model.parameters().iter() {
-            //     // println!("{}", p.data());
-            //     p.set_data(0.1);
-            // }
-
-            // println!("********************************************");
-            // println!("{}", k);
-            // println!("********************************************");
-
-            let (total_loss, acc) = loss(&model, &data, None);
-            model.zero_grad();
-            total_loss.backward();
-
-            let learning_rate = 1.0 - 0.9 * (k as f64) / 100.0;
-
-            for p in model.parameters().iter() {
-                // println!("Before: {}, Grad: {}", p.data(), p.grad());
-                p.step(learning_rate);
-                // println!("After: {}\n", p.data());
-            }
-
-            // let score = model.run(vec![data[k].0, data[k].1]);
-            // println!("{}", score[0].data());
-
-            if k % 1 == 0 {
-                println!(
-                    "rate {:3.3} step {:2.2} loss {:3.3}, accuracy {:5.3}%",
-                    learning_rate,
-                    k,
-                    total_loss.data(),
-                    acc * 100.0
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn measure() {
-        let model = MLP::new(2, vec![16, 16, 1]);
-        println!("Number of parameters: {}", model.parameters().len());
-        let data = crate::moon::moon_data();
-
-        for k in 0..5 {
-            let scores = data
-                .iter()
-                .map(|&(a, b, _)| model.run(vec![Value::new(a), Value::new(b)]))
-                .collect::<Vec<_>>();
-            let losses = data
-                .iter()
-                .map(|&(_, _, yb)| yb)
-                .zip(scores.iter())
-                .map(|(yi, scorei)| {
-                    let scorei = scorei[0].clone();
-                    (scorei * (-yi as f64) + 1.0).relu()
-                })
-                .collect::<Vec<_>>();
-
-            let data_loss = losses
-                .iter()
-                .fold(Value::new(0.0), |sum, loss| sum + loss.clone())
-                * (1.0 / losses.len() as f64);
-
-            let alpha = 1.0e-4;
-            let reg_loss = model
-                .parameters()
-                .iter()
-                .map(|p| p.clone().pow(Value::new(2.0)))
-                .fold(Value::new(0.0), |sum, p| sum + p)
-                * alpha;
-            let total_loss = data_loss + reg_loss;
-
-            let result = data
-                .iter()
-                .map(|&(_, _, yb)| yb)
-                .zip(scores.iter())
-                .map(|(yi, scorei)| (yi > 0) == (scorei[0].data() > 0.0))
-                .collect::<Vec<_>>();
-
-            let accuracy =
-                result.iter().filter(|&&r| r).fold(0.0, |acc, _| acc + 1.0) / result.len() as f64;
-
-            model.zero_grad();
-            total_loss.backward();
-        }
-    }
-
-    #[test]
-    fn unit_test() {
-        let data = crate::moon::moon_data();
-        let model = MLP::new(2, vec![3, 3, 1]);
-        for i in 0..3 {
-            for p in model.parameters().iter() {
-                p.set_data(0.1);
-            }
-
-            // let score = model.run(vec![data[i].0, data[i].1]);
-            // assert!(float_eq(0.516, score[0].data()));
-            // println!("{:5.3}", score[0].data());
-
-            let (total_loss, _) = loss(&model, &data, None);
-
-            model.zero_grad();
-            total_loss.backward();
-
-            for p in model.parameters().iter() {
-                p.step(0.05);
-            }
-            let score = model.run(vec![data[i].0, data[i].1]);
-            println!("{}", score[0].data());
-            // assert!(float_eq(0.5935553052638496, score[0].data()));
-        }
-    }
-
-    #[test]
-    fn backprop() {
+    #[cfg(feature = "layout")]
+    fn test_mlp_visualization() {
         let data = vec![(0.5, -0.2, 1)];
         let model = MLP::new(2, vec![2, 2, 1]);
         for p in model.parameters().iter() {
@@ -359,51 +258,46 @@ mod tests {
         let (total_loss, _) = loss(&model, &data, None);
         model.zero_grad();
         total_loss.backward();
-        for p in total_loss.get_topo().iter().rev() {
-            let p = p.read().unwrap();
-            // println!("{}, {}", p.op.to_string(), p.grad);
-        }
-        let score = model.run(vec![data[0].0, data[0].1]);
-        println!("{}", score[0].data());
+
+        let mut vg = total_loss.trace();
+
+        use layout::backends::svg::SVGWriter;
+        use layout::core::utils::save_to_file;
+        let mut svg = SVGWriter::new();
+        vg.do_it(false, false, false, &mut svg);
+        let _ = save_to_file("mlp_vis.svg", &svg.finalize());
     }
 
     #[test]
-    #[cfg(feature = "layout")]
-    fn graph() {
-        use layout::backends::svg::SVGWriter;
-        use layout::core::base::Orientation;
-        use layout::core::geometry::Point;
-        use layout::core::style::*;
-        use layout::core::utils::save_to_file;
-        use layout::std_shapes::shapes::*;
-        use layout::topo::layout::VisualGraph;
+    fn test_binary_classifier() {
+        for _ in 0..3 {
+            let model = MLP::new(2, vec![16, 16, 1]);
+            let data = crate::moon::moon_data();
 
-        // Create a new graph:
-        let mut vg = VisualGraph::new(Orientation::TopToBottom);
+            let mut final_accuracy = 0.0;
 
-        // Define the node styles:
-        let sp0 = ShapeKind::new_box("one");
-        let sp1 = ShapeKind::new_box("two");
-        let look0 = StyleAttr::simple();
-        let look1 = StyleAttr::simple();
-        let sz = Point::new(100., 100.);
-        // Create the nodes:
-        let node0 = Element::create(sp0, look0, Orientation::LeftToRight, sz);
-        let node1 = Element::create(sp1, look1, Orientation::LeftToRight, sz);
+            for k in 0..100 {
+                let (total_loss, acc) = loss(&model, &data, None);
+                model.zero_grad();
+                total_loss.backward();
 
-        // Add the nodes to the graph, and save a handle to each node.
-        let handle0 = vg.add_node(node0);
-        let handle1 = vg.add_node(node1);
+                let learning_rate = 1.0 - 0.9 * (k as f64) / 100.0;
 
-        // Add an edge between the nodes.
-        let arrow = Arrow::simple("123");
-        vg.add_edge(arrow, handle0, handle1);
+                for p in model.parameters().iter() {
+                    p.step(learning_rate);
+                }
 
-        // Render the nodes to some rendering backend.
-        let mut svg = SVGWriter::new();
-        vg.do_it(false, false, false, &mut svg);
-
-        // Save the output.
-        let _ = save_to_file("graph.svg", &svg.finalize());
+                if k % 1 == 0 {
+                    println!(
+                        "Step {:2.2} | loss {:3.3} | accuracy {:5.1}%\n",
+                        k,
+                        total_loss.data(),
+                        acc * 100.0
+                    );
+                }
+                final_accuracy = acc;
+            }
+            assert!(final_accuracy >= 0.99);
+        }
     }
 }

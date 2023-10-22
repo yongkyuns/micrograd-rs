@@ -48,8 +48,9 @@ impl Op {
             }
             Op::Relu => {
                 if let Ok(mut a) = a.write() {
-                    let relu = if out.data > 0.0 { 1.0 } else { 0.0 };
-                    a.grad += relu * out.grad;
+                    if out.data > 0.0 {
+                        a.grad += out.grad;
+                    }
                 } else {
                     panic!("Failed to get reference to value");
                 }
@@ -168,7 +169,11 @@ impl Value {
     }
 
     pub fn data(&self) -> f64 {
-        self.0.read().unwrap().data
+        if let Ok(v) = self.0.read() {
+            v.data
+        } else {
+            panic!("Failed to get reference to value");
+        }
     }
 
     pub fn set_data(&self, value: f64) {
@@ -192,7 +197,8 @@ impl Value {
     }
 
     pub fn relu(self) -> Self {
-        let relu = if self.data() > 0.0 { self.data() } else { 0.0 };
+        let data = self.data();
+        let relu = if data > 0.0 { data } else { 0.0 };
         Self::new_from_op(relu, Op::Relu, vec![self.0.clone()])
     }
 
@@ -216,16 +222,10 @@ impl Value {
 
         let mut topo = Vec::new();
         let mut visited = Vec::new();
-        let start = std::time::Instant::now();
         build_topo(&mut topo, &mut visited, self.0.clone());
-        // println!("{}", topo.len());
-        // println!("elapsed = {:5.3} sec", start.elapsed().as_secs_f64());
 
         for v in topo.iter().rev() {
             v.read().unwrap().backward();
-            // if let Ok(v) = v.read() {
-            //     println!("{:>5}|{:7.3}|{:7.3}", v.op.to_string(), v.data, v.grad);
-            // }
         }
     }
 
@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "layout")]
-    fn test_graph() {
+    fn test_graph_vis() {
         use layout::backends::svg::SVGWriter;
         use layout::core::utils::save_to_file;
 
