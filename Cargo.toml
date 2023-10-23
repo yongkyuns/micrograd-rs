@@ -9,6 +9,13 @@ edition = "2021"
 rand = "*"
 layout-rs = {version = "0.1.1", optional = true}
 
+[dev-dependencies]
+plotters = "0.3.5"
+
 [features]
 default = ["layout"]
 layout = ["dep:layout-rs"]
+
+[[example]]
+name = "binary_classifier"
+path = "examples/binary_classifier/src/main.rs"
